@@ -21,7 +21,7 @@ Each invocation consists of:
 5. **Auto-generated title**: from `entryName`
 6. **Optional overrides** via `<script data-img data-md data-title>`
 
-   Does this overide section still exist?  Section 7 may need to be removed.
+   >Does this overide section still exist?  Section 7 may need to be removed.
 7.   - Override any of these by adding attributes to the `<script>` tag in the :
     <script
       src="pageweaver.js"
