@@ -3,6 +3,7 @@
 // - Links: [slug](glyph.html#slug)
 // - Stubs: first sentence from *_top.md first line
 // - Nav: auto-appended or auto-replaced "## Navigation" block at bottom
+//   Cleans up old <!-- NAV:START --> blocks as well.
 
 const fs = require("fs");
 const path = require("path");
@@ -155,22 +156,24 @@ function buildNavBlock(current, siblings, prevDay, nextDay, stubBySlug) {
 function upsertNavBlock(filePath, navBlock) {
   const raw = fs.readFileSync(filePath, "utf8");
 
-  // 1) Prefer explicit "## Navigation" if present
-  let idx = raw.indexOf(NAV_HEADER);
+  const headerIdx = raw.indexOf(NAV_HEADER);
+  const oldIdx = raw.indexOf(OLD_NAV_START);
 
-  // 2) Fallback: if no header yet but old NAV markers exist, use that as cut point
-  if (idx === -1) {
-    const oldIdx = raw.indexOf(OLD_NAV_START);
-    if (oldIdx !== -1) {
-      idx = oldIdx;
-    }
+  // Choose the earliest marker if any exist
+  let cutIdx = -1;
+  if (headerIdx !== -1 && oldIdx !== -1) {
+    cutIdx = Math.min(headerIdx, oldIdx);
+  } else if (headerIdx !== -1) {
+    cutIdx = headerIdx;
+  } else if (oldIdx !== -1) {
+    cutIdx = oldIdx;
   }
 
   let newContent;
 
-  if (idx !== -1) {
-    // Replace everything from the nav marker/header downwards
-    const before = raw.slice(0, idx).trimEnd();
+  if (cutIdx !== -1) {
+    // Replace everything from the first marker/header downwards
+    const before = raw.slice(0, cutIdx).trimEnd();
     newContent = before + "\n\n" + navBlock + "\n";
   } else {
     // No nav yet: append at the bottom
