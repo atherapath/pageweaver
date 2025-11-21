@@ -1,287 +1,224 @@
-/* AtheraPath – PageWeaver (sequential hero-first load, lean image chain, no remote fallbacks) */
+// build_nav_from_date_slug.js
+// AtheraPath / PageWeaver – build nav for *_bottom.md using DD_MM_YY_N slugs
+// Links go to glyph.html#SLUG, label = SLUG, stub from *_top.md line 1.
 
-(() => {
-  // ---------- tiny utils ----------
-  const $ = (sel) => document.querySelector(sel);
+const fs = require("fs");
+const path = require("path");
 
-  // ---------- simple hash-based slug support (raw hash = slug) ----------
-  const getContext = () => {
-    // If hash is present, use it directly, e.g. glyph.html#gas_powered_circus
-    const rawHash = (location.hash || "").replace(/^#/, ""); // strip "#"
+const ROOT_DIR = ".";
 
-    if (rawHash) {
-      const maybe = rawHash.startsWith("h:") ? rawHash.slice(2) : rawHash; // tolerate h:
-      const decoded = decodeURIComponent(maybe);
-      const slug = decoded.replace(/\.[^.]+$/, ""); // strip .md / .html if someone adds it
-      const path = location.pathname;
-      const dir = path.slice(0, path.lastIndexOf("/") + 1);
-      return { dir, slug };
+const NAV_START = "<!-- NAV:START -->";
+const NAV_END = "<!-- NAV:END -->";
+
+function walkDir(dir, list = []) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "out") continue;
+      walkDir(fullPath, list);
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
+      list.push(fullPath);
     }
+  }
 
-    // fallback — filename based (original behaviour)
-    const path = location.pathname;
-    const dir = path.slice(0, path.lastIndexOf("/") + 1);
-    const file = path.slice(path.lastIndexOf("/") + 1);
-    const slug = file.replace(/\.[^.]+$/, "");
-    return { dir, slug };
-  };
+  return list;
+}
 
-  const formatTitle = (raw) =>
-    raw
-      .replace(/[-_]/g, " ")
-      .split(" ")
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join(" ");
+// 20_11_25_1_bottom.md
+function parseBottomFile(absPath) {
+  const relPath = path.relative(process.cwd(), absPath).replace(/\\/g, "/");
+  const base = path.basename(relPath);
+  if (!base.toLowerCase().endsWith("_bottom.md")) return null;
 
-  const mdToHtml = (md) => {
-    // Escape &, < but NOT ">" so we can detect blockquotes
-    const esc = md
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;");
+  const nameWithoutExt = base.replace(/\.md$/i, "");
+  const m = nameWithoutExt.match(/^(\d{1,2})_(\d{1,2})_(\d{2})_(\d+)_bottom$/);
+  if (!m) return null;
 
-    let html = esc
-      // headings
-      .replace(/^###### (.*)$/gm, "<h6>$1</h6>")
-      .replace(/^##### (.*)$/gm, "<h5>$1</h5>")
-      .replace(/^#### (.*)$/gm, "<h4>$1</h4>")
-      .replace(/^### (.*)$/gm, "<h3>$1</h3>")
-      .replace(/^## (.*)$/gm, "<h2>$1</h2>")
-      .replace(/^# (.*)$/gm, "<h1>$1</h1>")
-      // strong / em / inline code
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/`([^`]+?)`/g, "<code>$1</code>")
-      // links open in SAME TAB (no target="_blank")
-      .replace(/\[([^\]]+?)\]\(([^\s)]+)\)/g, '<a href="$2">$1</a>');
-    
-    html = html
-      .split(/\n{2,}/)
-      .map((chunk) => {
-        const trimmed = chunk.trim();
-        if (!trimmed) return "";
+  let [_, dd, mm, yy, idx] = m;
+  dd = dd.padStart(2, "0");
+  mm = mm.padStart(2, "0");
 
-        // already-converted headings
-        if (/^<h\d>/.test(trimmed)) return trimmed;
+  const yearFull = 2000 + parseInt(yy, 10);
+  const numericKey = parseInt(`${yearFull}${mm}${dd}`, 10); // YYYYMMDD
+  const dateLabel = `${dd}_${mm}_${yy}`; // 20_11_25
+  const slug = `${dateLabel}_${idx}`;    // 20_11_25_1
 
-        // horizontal rules: --- *** ___
-        if (/^(-{3,}|_{3,}|\*{3,})$/.test(trimmed)) {
-          return "<hr>";
-        }
+  return { relPath, base, slug, dateLabel, idx, numericKey };
+}
 
-        // blockquotes: lines starting with ">"
-        if (/^>\s?/.test(trimmed)) {
-          const inner = trimmed.replace(/^>\s?/gm, "");
-          return `<blockquote>${inner.replace(/\n/g, "<br>")}</blockquote>`;
-        }
+// 20_11_25_1_top.md
+function parseTopFile(absPath) {
+  const relPath = path.relative(process.cwd(), absPath).replace(/\\/g, "/");
+  const base = path.basename(relPath);
+  if (!base.toLowerCase().endsWith("_top.md")) return null;
 
-        // ordered lists: "1. item"
-        if (/^\s*\d+\.\s/m.test(trimmed)) {
-          const items = trimmed
-            .split(/\n/)
-            .map((l) => l.replace(/^\s*\d+\.\s/, ""))
-            .filter((li) => li.trim().length)
-            .map((li) => `<li>${li}</li>`)
-            .join("");
-          return `<ol>${items}</ol>`;
-        }
+  const nameWithoutExt = base.replace(/\.md$/i, "");
+  const m = nameWithoutExt.match(/^(\d{1,2})_(\d{1,2})_(\d{2})_(\d+)_top$/);
+  if (!m) return null;
 
-        // unordered lists: "- item" or "* item"
-        if (/^\s*[-*] /.test(trimmed)) {
-          const items = trimmed
-            .split(/\n/)
-            .map((l) => l.replace(/^\s*[-*] /, ""))
-            .filter((li) => li.trim().length)
-            .map((li) => `<li>${li}</li>`)
-            .join("");
-          return `<ul>${items}</ul>`;
-        }
+  let [_, dd, mm, yy, idx] = m;
+  dd = dd.padStart(2, "0");
+  mm = mm.padStart(2, "0");
 
-        // default: paragraph, preserve single newlines as <br>
-        return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
-      })
-      .filter(Boolean)
-      .join("\n");
+  const dateLabel = `${dd}_${mm}_${yy}`;
+  const slug = `${dateLabel}_${idx}`;
 
-    return html;
-  };
+  return { relPath, base, slug, dateLabel, idx };
+}
 
-  // --- Image helpers: hero-first JPG load, then background chain discovery ---
-  const probeJpg = (url) =>
-    new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(url);
-      img.onerror = () => resolve(null);
-      img.decoding = "async";
-      img.referrerPolicy = "no-referrer";
-      img.src = url + (url.includes("?") ? "&" : "?") + "cb=" + Date.now();
-    });
+// slug -> stub (first line from *_top.md)
+function buildStubMap(allMdPaths) {
+  const stubBySlug = new Map();
 
-  const setupImages = (dir, slug) => {
-    const hero = document.getElementById("hero-image");
-    const caption = document.getElementById("hero-caption");
-    const figure = hero ? hero.closest("figure") || hero.parentElement : null;
+  for (const file of allMdPaths) {
+    const meta = parseTopFile(file);
+    if (!meta) continue;
 
-    if (!hero) return;
+    const content = fs.readFileSync(file, "utf8");
+    const firstLine = content.split(/\r?\n/)[0].trim();
+    const stub = firstLine || meta.slug;
 
-    hero.style.visibility = "hidden";
+    stubBySlug.set(meta.slug, stub);
+  }
 
-    const primaryUrl = `${dir}${slug}.jpg`;
+  return stubBySlug;
+}
 
-    // Once the first hero image has loaded, we can use the "spare" time
-    // to probe for slug_2.jpg..slug_6.jpg in the background.
-    const onFirstLoad = () => {
-      hero.style.visibility = "visible";
-      if (caption) {
-        caption.textContent = "Image loaded by filename convention";
-      }
+// group bottom files by date
+function groupByDate(files) {
+  const byDate = new Map();
 
-      // Now, quietly look for extra frames in sequence.
-      (async () => {
-        const extras = [];
-        for (let i = 2; i <= 6; i++) {
-          const url = `${dir}${slug}_${i}.jpg`;
-          const found = await probeJpg(url);
-          if (!found) break; // stop at first missing link
-          extras.push(found);
-        }
+  for (const f of files) {
+    if (!byDate.has(f.numericKey)) byDate.set(f.numericKey, []);
+    byDate.get(f.numericKey).push(f);
+  }
 
-        if (!extras.length) return;
+  const dateKeys = Array.from(byDate.keys()).sort((a, b) => a - b);
 
-        const urls = [primaryUrl, ...extras];
-        if (caption) {
-          caption.textContent = `Image chain slideshow (${urls.length} images, 6s each)`;
-        }
+  for (const key of dateKeys) {
+    const list = byDate.get(key);
+    list.sort((a, b) => a.slug.localeCompare(b.slug));
+  }
 
-        let idx = 0;
-        setInterval(() => {
-          idx = (idx + 1) % urls.length;
-          hero.src = urls[idx];
-        }, 6000);
-      })();
-    };
+  return { byDate, dateKeys };
+}
 
-    // If primary fails, we hide the figure entirely and never check extra images.
-    const onError = () => {
-      if (figure) figure.style.display = "none";
-      document.body.classList.add("no-hero");
-    };
+function buildNavBlock(currentBottom, siblingsForDate, prevDateData, nextDateData, stubBySlug) {
+  const getStub = (slug) => stubBySlug.get(slug) || slug;
 
-    hero.addEventListener("load", onFirstLoad, { once: true });
-    hero.addEventListener("error", onError, { once: true });
+  let md = "";
+  md += `${NAV_START}\n`;
+  md += `<!-- Auto-generated navigation. Do not edit this block by hand. -->\n\n`;
+  md += `## Navigation\n\n`;
 
-    // Kick off the primary load immediately.
-    hero.src = primaryUrl;
-  };
+  // Previous day
+  if (prevDateData && prevDateData.files.length > 0) {
+    const prev = prevDateData.files[0]; // first glyph of previous day
+    const stub = getStub(prev.slug);
+    md += `Previous day: [${prev.slug}](glyph.html#${prev.slug})\n`;
+    md += `${stub}\n\n`;
+  }
 
-  document.addEventListener("DOMContentLoaded", async () => {
-    const { dir, slug } = getContext();
+  // Next day
+  if (nextDateData && nextDateData.files.length > 0) {
+    const next = nextDateData.files[0]; // first glyph of next day
+    const stub = getStub(next.slug);
+    md += `Next day: [${next.slug}](glyph.html#${next.slug})\n`;
+    md += `${stub}\n\n`;
+  }
 
-    // Title
-    const title = formatTitle(slug);
-    document.title = title;
-    const titleEl = $("#page-title");
-    if (titleEl) titleEl.textContent = title;
+  // Siblings for this day (excluding current)
+  const otherSiblings = siblingsForDate.filter(
+    (f) => f.relPath !== currentBottom.relPath
+  );
 
-    // --- Images: hero-first behaviour ---
-    setupImages(dir, slug);
-
-    // Helper to load a markdown file into a target element,
-    // and hide the element completely if the file is missing / empty.
-    const loadMarkdownSection = async (selector, path) => {
-      const el = $(selector);
-      if (!el) return;
-
-      try {
-        const res = await fetch(path + "?cb=" + Date.now(), { cache: "no-store" });
-        if (!res.ok) {
-          el.style.display = "none";
-          return;
-        }
-        const text = await res.text();
-        if (!text || !text.trim()) {
-          el.style.display = "none";
-          return;
-        }
-        el.innerHTML = mdToHtml(text);
-      } catch {
-        el.style.display = "none";
-      }
-    };
-
-    // Main markdown (slug.md)
-    await loadMarkdownSection("#md-content", `${dir}${slug}.md`);
-
-    // Top banner (slug_top.md)
-    await loadMarkdownSection("#top-banner", `${dir}${slug}_top.md`);
-
-    // Bottom banner (slug_bottom.md)
-    await loadMarkdownSection("#bottom-banner", `${dir}${slug}_bottom.md`);
-
-    // Optional video block sitting neatly between main content and bottom banner
-    const videoContainer = $("#video-container");
-    if (videoContainer) {
-      videoContainer.innerHTML = ""; // clear any old content
-
-      const videoUrl = `${dir}${slug}.mp4`;
-      let finalUrl = null;
-
-      try {
-        const head = await fetch(videoUrl, { method: "HEAD", cache: "no-store" });
-        if (head.ok) finalUrl = videoUrl;
-      } catch {
-        // ignore
-      }
-
-      // If no local MP4 exists, hide the container and do nothing.
-      if (!finalUrl) {
-        videoContainer.style.display = "none";
-      } else {
-        const wrapper = document.createElement("figure");
-        wrapper.className = "pw-figure";
-        wrapper.style.maxWidth = "600px";
-        wrapper.style.margin = "0 auto 18px";
-
-        const videoEl = document.createElement("video");
-        videoEl.src = finalUrl;
-        videoEl.autoplay = true;
-        videoEl.loop = false;             // we control the loop manually
-        videoEl.muted = true;
-        videoEl.controls = true;
-        videoEl.style.width = "100%";
-        videoEl.style.border = "1px solid var(--border)";
-        videoEl.style.borderRadius = "6px";
-        videoEl.style.display = "block";
-
-        // Make sure we always start from 0 and keep looping the first 6 seconds
-        videoEl.addEventListener("loadedmetadata", () => {
-          videoEl.currentTime = 0;
-          videoEl.play();
-        });
-
-        videoEl.addEventListener("timeupdate", () => {
-          if (videoEl.currentTime >= 6) {
-            videoEl.currentTime = 0;
-            videoEl.play();
-          }
-        });
-
-        const cap = document.createElement("figcaption");
-        cap.textContent = "Video loaded by filename convention";
-        cap.style.marginTop = "8px";
-        cap.style.color = "var(--fg-dim)";
-        cap.style.fontSize = ".9rem";
-        cap.style.textAlign = "center";
-        cap.style.opacity = ".85";
-
-        wrapper.appendChild(videoEl);
-        wrapper.appendChild(cap);
-        videoContainer.appendChild(wrapper);
-      }
+  if (otherSiblings.length > 0) {
+    md += `More glyphs from this day:\n`;
+    for (const sib of otherSiblings) {
+      const stub = getStub(sib.slug);
+      md += `- [${sib.slug}](glyph.html#${sib.slug})\n`;
+      md += `  ${stub}\n`;
     }
-  });
+    md += `\n`;
+  }
 
-  // On hash change (#slug) behave like you hit refresh
-  window.addEventListener("hashchange", () => {
-    window.location.reload();
-  });
-})();
+  md += `${NAV_END}\n`;
+  return md;
+}
+
+function upsertNavBlock(filePath, navBlock) {
+  const raw = fs.readFileSync(filePath, "utf8");
+
+  const startIdx = raw.indexOf(NAV_START);
+  const endIdx = raw.indexOf(NAV_END);
+
+  let newContent;
+
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    const before = raw.slice(0, startIdx).trimEnd();
+    const after = raw.slice(endIdx + NAV_END.length).trimStart();
+    newContent = before + "\n\n" + navBlock + "\n" + (after ? "\n" + after : "");
+  } else {
+    const trimmed = raw.trimEnd();
+    newContent = trimmed + "\n\n" + navBlock + "\n";
+  }
+
+  fs.writeFileSync(filePath, newContent, "utf8");
+  console.log(`Updated nav in: ${filePath}`);
+}
+
+function main() {
+  const rootPath = path.join(process.cwd(), ROOT_DIR);
+  if (!fs.existsSync(rootPath)) {
+    console.error(`ROOT_DIR '${ROOT_DIR}' does not exist.`);
+    process.exit(1);
+  }
+
+  const allMd = walkDir(rootPath);
+  const stubBySlug = buildStubMap(allMd);
+
+  const bottoms = [];
+  for (const file of allMd) {
+    const meta = parseBottomFile(file);
+    if (meta) bottoms.push(meta);
+  }
+
+  if (bottoms.length === 0) {
+    console.log("No date-based *_bottom.md files found. Nothing to do.");
+    return;
+  }
+
+  const { byDate, dateKeys } = groupByDate(bottoms);
+
+  const daysData = new Map();
+  for (const key of dateKeys) {
+    const files = byDate.get(key);
+    const dateLabel = files[0].dateLabel;
+    daysData.set(key, { numericKey: key, dateLabel, files });
+  }
+
+  for (let i = 0; i < dateKeys.length; i++) {
+    const key = dateKeys[i];
+    const currentDay = daysData.get(key);
+    const prevDay = i > 0 ? daysData.get(dateKeys[i - 1]) : null;
+    const nextDay = i < dateKeys.length - 1 ? daysData.get(dateKeys[i + 1]) : null;
+
+    const siblings = currentDay.files;
+
+    for (const bottomFile of siblings) {
+      const navBlock = buildNavBlock(
+        bottomFile,
+        siblings,
+        prevDay,
+        nextDay,
+        stubBySlug
+      );
+      upsertNavBlock(bottomFile.relPath, navBlock);
+    }
+  }
+}
+
+main();
