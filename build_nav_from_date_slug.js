@@ -1,15 +1,17 @@
 // build_nav_from_date_slug.js
-// AtheraPath / PageWeaver – build nav for *_bottom.md using DD_MM_YY_N slugs
-// Links go to glyph.html#SLUG, label = SLUG, stub from *_top.md line 1.
+// PageWeaver / AtheraPath — Navigation builder for DD_MM_YY_N glyphs
+// - Links: [slug](glyph.html#slug)
+// - Stubs: first sentence from *_top.md first line
+// - Nav: auto-appended or auto-replaced "## Navigation" block at bottom
 
 const fs = require("fs");
 const path = require("path");
 
 const ROOT_DIR = ".";
+const NAV_HEADER = "## Navigation";
+const OLD_NAV_START = "<!-- NAV:START -->";
 
-const NAV_START = "<!-- NAV:START -->";
-const NAV_END = "<!-- NAV:END -->";
-
+// Walk repo and collect all .md files
 function walkDir(dir, list = []) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
@@ -17,7 +19,7 @@ function walkDir(dir, list = []) {
     const fullPath = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "out") continue;
+      if ([".git", "node_modules", "out"].includes(entry.name)) continue;
       walkDir(fullPath, list);
     } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
       list.push(fullPath);
@@ -27,195 +29,190 @@ function walkDir(dir, list = []) {
   return list;
 }
 
-// 20_11_25_1_bottom.md
+// Parse *_bottom.md → slug + date info
+// Example: 20_11_25_1_bottom.md
 function parseBottomFile(absPath) {
-  const relPath = path.relative(process.cwd(), absPath).replace(/\\/g, "/");
-  const base = path.basename(relPath);
+  const rel = path.relative(process.cwd(), absPath).replace(/\\/g, "/");
+  const base = path.basename(rel);
+
   if (!base.toLowerCase().endsWith("_bottom.md")) return null;
 
-  const nameWithoutExt = base.replace(/\.md$/i, "");
-  const m = nameWithoutExt.match(/^(\d{1,2})_(\d{1,2})_(\d{2})_(\d+)_bottom$/);
+  const m = base.match(/^(\d{1,2})_(\d{1,2})_(\d{2})_(\d+)_bottom\.md$/i);
   if (!m) return null;
 
   let [_, dd, mm, yy, idx] = m;
+
   dd = dd.padStart(2, "0");
   mm = mm.padStart(2, "0");
 
-  const yearFull = 2000 + parseInt(yy, 10);
-  const numericKey = parseInt(`${yearFull}${mm}${dd}`, 10); // YYYYMMDD
-  const dateLabel = `${dd}_${mm}_${yy}`; // 20_11_25
-  const slug = `${dateLabel}_${idx}`;    // 20_11_25_1
+  const numericKey = parseInt(`20${yy}${mm}${dd}`, 10); // YYYYMMDD
+  const dateLabel = `${dd}_${mm}_${yy}`;
+  const slug = `${dateLabel}_${idx}`;
 
-  return { relPath, base, slug, dateLabel, idx, numericKey };
+  return { relPath: rel, slug, dateLabel, idx, numericKey };
 }
 
-// 20_11_25_1_top.md
+// Parse *_top.md → slug
+// Example: 20_11_25_1_top.md
 function parseTopFile(absPath) {
-  const relPath = path.relative(process.cwd(), absPath).replace(/\\/g, "/");
-  const base = path.basename(relPath);
+  const rel = path.relative(process.cwd(), absPath).replace(/\\/g, "/");
+  const base = path.basename(rel);
+
   if (!base.toLowerCase().endsWith("_top.md")) return null;
 
-  const nameWithoutExt = base.replace(/\.md$/i, "");
-  const m = nameWithoutExt.match(/^(\d{1,2})_(\d{1,2})_(\d{2})_(\d+)_top$/);
+  const m = base.match(/^(\d{1,2})_(\d{1,2})_(\d{2})_(\d+)_top\.md$/i);
   if (!m) return null;
 
   let [_, dd, mm, yy, idx] = m;
+
   dd = dd.padStart(2, "0");
   mm = mm.padStart(2, "0");
 
   const dateLabel = `${dd}_${mm}_${yy}`;
   const slug = `${dateLabel}_${idx}`;
 
-  return { relPath, base, slug, dateLabel, idx };
+  return { relPath: rel, slug, dateLabel, idx };
 }
 
-// slug -> stub (first line from *_top.md)
-function buildStubMap(allMdPaths) {
-  const stubBySlug = new Map();
+// Build slug → stub map: first sentence of first line from *_top.md
+function buildStubMap(allMd) {
+  const map = new Map();
 
-  for (const file of allMdPaths) {
+  for (const file of allMd) {
     const meta = parseTopFile(file);
     if (!meta) continue;
 
     const content = fs.readFileSync(file, "utf8");
-    const firstLine = content.split(/\r?\n/)[0].trim();
-    const stub = firstLine || meta.slug;
+    const firstLine = content.split(/\r?\n/)[0].trim() || meta.slug;
 
-    stubBySlug.set(meta.slug, stub);
+    // Extract first sentence ending with . ! or ?
+    const sentenceMatch = firstLine.match(/^(.+?[.!?])(\s|$)/);
+    const stub = sentenceMatch ? sentenceMatch[1].trim() : firstLine;
+
+    map.set(meta.slug, stub);
   }
 
-  return stubBySlug;
+  return map;
 }
 
-// group bottom files by date
-function groupByDate(files) {
+// Group bottom files by date numericKey (YYYYMMDD)
+function groupByDate(bottomFiles) {
   const byDate = new Map();
 
-  for (const f of files) {
+  for (const f of bottomFiles) {
     if (!byDate.has(f.numericKey)) byDate.set(f.numericKey, []);
     byDate.get(f.numericKey).push(f);
   }
 
-  const dateKeys = Array.from(byDate.keys()).sort((a, b) => a - b);
+  const keys = [...byDate.keys()].sort((a, b) => a - b);
 
-  for (const key of dateKeys) {
-    const list = byDate.get(key);
-    list.sort((a, b) => a.slug.localeCompare(b.slug));
+  // Sort files within each date by slug
+  for (const key of keys) {
+    byDate.get(key).sort((a, b) => a.slug.localeCompare(b.slug));
   }
 
-  return { byDate, dateKeys };
+  return { byDate, keys };
 }
 
-function buildNavBlock(currentBottom, siblingsForDate, prevDateData, nextDateData, stubBySlug) {
-  const getStub = (slug) => stubBySlug.get(slug) || slug;
+// Build navigation block markdown
+function buildNavBlock(current, siblings, prevDay, nextDay, stubBySlug) {
+  const stubOf = (slug) => stubBySlug.get(slug) || slug;
+  const href = (slug) => `glyph.html#${slug}`;
 
   let md = "";
-  md += `${NAV_START}\n`;
-  md += `<!-- Auto-generated navigation. Do not edit this block by hand. -->\n\n`;
-  md += `## Navigation\n\n`;
+  md += `${NAV_HEADER}\n\n`;
 
   // Previous day
-  if (prevDateData && prevDateData.files.length > 0) {
-    const prev = prevDateData.files[0]; // first glyph of previous day
-    const stub = getStub(prev.slug);
-    md += `Previous day: [${prev.slug}](glyph.html#${prev.slug})\n`;
-    md += `${stub}\n\n`;
+  if (prevDay && prevDay.files.length > 0) {
+    const first = prevDay.files[0];
+    md += `Previous day: [${first.slug}](${href(first.slug)})\n`;
+    md += `${stubOf(first.slug)}\n\n`;
   }
 
   // Next day
-  if (nextDateData && nextDateData.files.length > 0) {
-    const next = nextDateData.files[0]; // first glyph of next day
-    const stub = getStub(next.slug);
-    md += `Next day: [${next.slug}](glyph.html#${next.slug})\n`;
-    md += `${stub}\n\n`;
+  if (nextDay && nextDay.files.length > 0) {
+    const first = nextDay.files[0];
+    md += `Next day: [${first.slug}](${href(first.slug)})\n`;
+    md += `${stubOf(first.slug)}\n\n`;
   }
 
-  // Siblings for this day (excluding current)
-  const otherSiblings = siblingsForDate.filter(
-    (f) => f.relPath !== currentBottom.relPath
-  );
+  // Siblings (same day, different glyphs)
+  const others = siblings.filter((s) => s.relPath !== current.relPath);
 
-  if (otherSiblings.length > 0) {
+  if (others.length > 0) {
     md += `More glyphs from this day:\n`;
-    for (const sib of otherSiblings) {
-      const stub = getStub(sib.slug);
-      md += `- [${sib.slug}](glyph.html#${sib.slug})\n`;
-      md += `  ${stub}\n`;
+    for (const sib of others) {
+      md += `- [${sib.slug}](${href(sib.slug)})\n`;
+      md += `  ${stubOf(sib.slug)}\n`;
     }
     md += `\n`;
   }
 
-  md += `${NAV_END}\n`;
   return md;
 }
 
+// Insert or replace the navigation section in a bottom file
 function upsertNavBlock(filePath, navBlock) {
   const raw = fs.readFileSync(filePath, "utf8");
 
-  const startIdx = raw.indexOf(NAV_START);
-  const endIdx = raw.indexOf(NAV_END);
+  // 1) Prefer explicit "## Navigation" if present
+  let idx = raw.indexOf(NAV_HEADER);
+
+  // 2) Fallback: if no header yet but old NAV markers exist, use that as cut point
+  if (idx === -1) {
+    const oldIdx = raw.indexOf(OLD_NAV_START);
+    if (oldIdx !== -1) {
+      idx = oldIdx;
+    }
+  }
 
   let newContent;
 
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const before = raw.slice(0, startIdx).trimEnd();
-    const after = raw.slice(endIdx + NAV_END.length).trimStart();
-    newContent = before + "\n\n" + navBlock + "\n" + (after ? "\n" + after : "");
+  if (idx !== -1) {
+    // Replace everything from the nav marker/header downwards
+    const before = raw.slice(0, idx).trimEnd();
+    newContent = before + "\n\n" + navBlock + "\n";
   } else {
-    const trimmed = raw.trimEnd();
-    newContent = trimmed + "\n\n" + navBlock + "\n";
+    // No nav yet: append at the bottom
+    newContent = raw.trimEnd() + "\n\n" + navBlock + "\n";
   }
 
   fs.writeFileSync(filePath, newContent, "utf8");
   console.log(`Updated nav in: ${filePath}`);
 }
 
+// Main driver
 function main() {
-  const rootPath = path.join(process.cwd(), ROOT_DIR);
-  if (!fs.existsSync(rootPath)) {
-    console.error(`ROOT_DIR '${ROOT_DIR}' does not exist.`);
-    process.exit(1);
-  }
+  const allMd = walkDir(ROOT_DIR);
 
-  const allMd = walkDir(rootPath);
-  const stubBySlug = buildStubMap(allMd);
+  const stubMap = buildStubMap(allMd);
 
-  const bottoms = [];
-  for (const file of allMd) {
-    const meta = parseBottomFile(file);
-    if (meta) bottoms.push(meta);
-  }
+  const bottoms = allMd
+    .map(parseBottomFile)
+    .filter(Boolean);
 
   if (bottoms.length === 0) {
-    console.log("No date-based *_bottom.md files found. Nothing to do.");
+    console.log("No *_bottom.md files found.");
     return;
   }
 
-  const { byDate, dateKeys } = groupByDate(bottoms);
+  const { byDate, keys } = groupByDate(bottoms);
 
-  const daysData = new Map();
-  for (const key of dateKeys) {
-    const files = byDate.get(key);
-    const dateLabel = files[0].dateLabel;
-    daysData.set(key, { numericKey: key, dateLabel, files });
+  const days = new Map();
+  for (const k of keys) {
+    days.set(k, { numericKey: k, files: byDate.get(k) });
   }
 
-  for (let i = 0; i < dateKeys.length; i++) {
-    const key = dateKeys[i];
-    const currentDay = daysData.get(key);
-    const prevDay = i > 0 ? daysData.get(dateKeys[i - 1]) : null;
-    const nextDay = i < dateKeys.length - 1 ? daysData.get(dateKeys[i + 1]) : null;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const prev = i > 0 ? days.get(keys[i - 1]) : null;
+    const next = i < keys.length - 1 ? days.get(keys[i + 1]) : null;
 
+    const currentDay = days.get(key);
     const siblings = currentDay.files;
 
     for (const bottomFile of siblings) {
-      const navBlock = buildNavBlock(
-        bottomFile,
-        siblings,
-        prevDay,
-        nextDay,
-        stubBySlug
-      );
+      const navBlock = buildNavBlock(bottomFile, siblings, prev, next, stubMap);
       upsertNavBlock(bottomFile.relPath, navBlock);
     }
   }
