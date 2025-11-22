@@ -22,10 +22,10 @@ jobs:
       - name: Run nav.js to generate pageweaver.json
         run: node nav.js
 
-      - name: Commit updated JSON
+      - name: Commit updated JSON if it changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pageweaver.json
-          git commit -m "Update pageweaver.json [skip ci]" || echo "No changes to commit"
+          git diff --quiet --cached || git commit -m "Update pageweaver.json [skip ci]"
           git push
