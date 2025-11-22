@@ -2,28 +2,28 @@
 const fs = require('fs');
 const path = require('path');
 
-// Configuration
-const MD_DIR = './markdown';                // folder containing all weekly markdown files
-const OUTPUT_FILE = './data/pageweaver.json'; // single consolidated JSON
-const WEEKLY_FILE_REGEX = /^\d{7}\.md$/;   // matches weekly MD files e.g., 4725251.md
-const MAX_MEDIA = 3;                        // max number of images/videos per week/section
+// Everything in root
+const ROOT_DIR = '.';
+const OUTPUT_FILE = './pageweaver.json';
+const WEEKLY_FILE_REGEX = /^\d{7}\.md$/;
+const MAX_MEDIA = 3;
 
-// Helper: get all images/videos for a base name
+// Get images/videos for a base name
 function getMediaFiles(baseName, type) {
   const ext = type === 'image' ? '.jpg' : '.mp4';
   const files = [];
   for (let i = 1; i <= MAX_MEDIA; i++) {
-    const filePath = path.join(MD_DIR, `${baseName}${i}${ext}`);
-    if (fs.existsSync(filePath)) {
-      files.push(`${baseName}${i}${ext}`);
+    const fileName = `${baseName}${i}${ext}`;
+    if (fs.existsSync(path.join(ROOT_DIR, fileName))) {
+      files.push(fileName);
     }
   }
   return files;
 }
 
-// Helper: extract sections from markdown content
+// Extract sections from markdown content
 function extractSections(content) {
-  const sectionRegex = /^(\d{6}\d)\s*$/gm; // DDMMYYX pattern
+  const sectionRegex = /^(\d{6}\d)\s*$/gm; // DDMMYYX
   const sections = [];
   let match;
   let lastId = null;
@@ -44,7 +44,6 @@ function extractSections(content) {
     lastIndex = match.index + match[0].length;
   }
 
-  // Add final section
   if (lastId) {
     const sectionContent = content.substring(lastIndex).trim();
     sections.push({
@@ -59,17 +58,15 @@ function extractSections(content) {
   return sections;
 }
 
-// Main object to hold all weeks
+// Main object for all weeks
 const allWeeks = {};
 
-// Process each markdown file
-fs.readdirSync(MD_DIR).forEach(file => {
+// Process each markdown in root
+fs.readdirSync(ROOT_DIR).forEach(file => {
   if (!WEEKLY_FILE_REGEX.test(file)) return;
 
   const slug = path.basename(file, '.md');
-  const mdPath = path.join(MD_DIR, file);
-  const content = fs.readFileSync(mdPath, 'utf-8');
-
+  const content = fs.readFileSync(path.join(ROOT_DIR, file), 'utf-8');
   const sections = extractSections(content);
 
   allWeeks[slug] = {
@@ -87,9 +84,6 @@ fs.readdirSync(MD_DIR).forEach(file => {
   };
 });
 
-// Ensure output directory exists
-if (!fs.existsSync(path.dirname(OUTPUT_FILE))) fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
-
-// Write the master JSON file
+// Write master JSON in root
 fs.writeFileSync(OUTPUT_FILE, JSON.stringify(allWeeks, null, 2), 'utf-8');
 console.log(`Generated master JSON: ${OUTPUT_FILE}`);
