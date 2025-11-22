@@ -1,15 +1,14 @@
-name: PageWeaver JSON Update
+name: PageWeaver JSON Run
 
 on:
+  workflow_dispatch:    # manual trigger
   push:
     paths:
-      - '*.md'          # trigger on any markdown file in root
-  workflow_dispatch:    # optional manual trigger
+      - '*.md'          # triggers on root markdown changes
 
 jobs:
-  build:
+  run-nav:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -17,15 +16,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'   # Node version
+          node-version: '20'
 
       - name: Run nav.js to generate pageweaver.json
         run: node nav.js
-
-      - name: Commit updated JSON if it changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pageweaver.json
-          git diff --quiet --cached || git commit -m "Update pageweaver.json [skip ci]"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
