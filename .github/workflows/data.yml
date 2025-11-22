@@ -17,10 +17,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'   # or your preferred Node version
-
-      - name: Install dependencies
-        run: npm install        # only if you have a package.json
+          node-version: '20'   # Node version
 
       - name: Run nav.js to generate pageweaver.json
         run: node nav.js
