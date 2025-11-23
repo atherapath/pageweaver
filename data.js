@@ -1,6 +1,28 @@
 const fs = require('fs');
 const path = require('path');
-const { marked } = require('marked'); // Markdown → HTML
+
+// --- Minimal markdown → HTML converter
+function mdToHtml(md) {
+  let html = md;
+
+  // Headings
+  html = html.replace(/^### (.*)$/gim, '<h3>$1</h3>');
+  html = html.replace(/^## (.*)$/gim, '<h2>$1</h2>');
+  html = html.replace(/^# (.*)$/gim, '<h1>$1</h1>');
+
+  // Bold / Italic
+  html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+  html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+
+  // Lists
+  html = html.replace(/^\s*[-+*] (.*)$/gim, '<ul><li>$1</li></ul>');
+  html = html.replace(/^\s*\d+\. (.*)$/gim, '<ol><li>$1</li></ol>');
+
+  // Paragraphs (anything not already wrapped)
+  html = html.replace(/^(?!<h\d|<ul|<ol)(.+)$/gim, '<p>$1</p>');
+
+  return html.trim();
+}
 
 // Collect lawful files
 function collectFiles() {
@@ -44,8 +66,8 @@ function parseMarkdown(mdFile) {
       sections.push({
         id,
         title: humanTitle(id),
-        markdown: sectionText,           // raw markdown
-        html: marked.parse(sectionText), // converted HTML
+        markdown: sectionText,
+        html: mdToHtml(sectionText), // 🔑 convert markdown → HTML
         images: collectMedia(id, 'jpg'),
         videos: collectMedia(id, 'mp4')
       });
