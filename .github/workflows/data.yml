@@ -1,22 +1,22 @@
-name: PageWeaver JSON Run
+name: Pageweaver JSON Build
 
 on:
-  workflow_dispatch:    # manual trigger
   push:
     paths:
-      - '*.md'          # triggers on root markdown changes
+      - "*.md"   # only run when markdown files change
 
 jobs:
-  run-nav:
+  build-json:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20'
+          node-version: "18"
 
-      - name: Run nav.js to generate pageweaver.json
-        run: node nav.js
+      - name: Run data.js
+        run: node data.js
